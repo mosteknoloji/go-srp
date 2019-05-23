@@ -2,8 +2,14 @@ package srp
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"io"
 	"math/big"
+
+	"golang.org/x/crypto/hkdf"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 type SRPClient struct {
@@ -55,7 +61,7 @@ func (c *SRPClient) SetB(Bb []byte) {
 	S := clientGetS(c.Params, c.Multiplier, c.X, c.Secret1, B, u)
 
 	c.K = getK(c.Params, S)
-	c.M1 = getM1(c.Params, intToBytes(c.A), Bb, S)
+	c.M1 = getM1(c.Params, intToBytes(c.A), Bb, c.K)
 	c.M2 = getM2(c.Params, intToBytes(c.A), c.M1, c.K)
 
 	c.u = u               // Only for tests
@@ -120,17 +126,17 @@ func clientGetS(params *SRPParams, k, x, a, B, u *big.Int) []byte {
 }
 
 func getx(params *SRPParams, salt, I, P []byte) *big.Int {
-	var ipBytes []byte
-	ipBytes = append(ipBytes, I...)
-	ipBytes = append(ipBytes, []byte(":")...)
-	ipBytes = append(ipBytes, P...)
 
-	hashIP := params.Hash.New()
-	hashIP.Write(ipBytes)
+	hash := sha256.New
 
-	hashX := params.Hash.New()
-	hashX.Write(salt)
-	hashX.Write(hashToBytes(hashIP))
+	hkdf := hkdf.New(hash, I, salt, nil)
+	derived_salt := make([]byte, 32)
+	io.ReadFull(hkdf, derived_salt)
 
-	return hashToInt(hashX)
+	derived_salt = []byte(hex.EncodeToString(derived_salt))
+	key := pbkdf2.Key(P, derived_salt, 100000, 32, sha256.New)
+
+	U := new(big.Int)
+	U.SetBytes(key)
+	return U
 }
